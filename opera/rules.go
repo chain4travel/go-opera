@@ -177,6 +177,26 @@ func FakeNetRules() Rules {
 	}
 }
 
+func PrivateNetRules(networkId uint64) Rules {
+        return Rules{
+                Name:      "private",
+                NetworkID: networkId,
+                Dag:       DefaultDagRules(),
+                Epochs:    DefaultEpochsRules(),
+                Economy:   DefaultEconomyRules(),
+                Blocks: BlocksRules{
+                        MaxBlockGas:             20500000,
+                        MaxEmptyBlockSkipPeriod: inter.Timestamp(1 * time.Minute),
+                },
+                Upgrades: Upgrades{
+                        Berlin: true,
+                        London: true,
+                        Llr:    true,
+                },
+        }
+}
+
+
 // DefaultEconomyRules returns mainnet economy
 func DefaultEconomyRules() EconomyRules {
 	return EconomyRules{

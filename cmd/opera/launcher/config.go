@@ -45,6 +45,15 @@ var (
 		Category:    "MISCELLANEOUS COMMANDS",
 		Description: `The dumpconfig command shows configuration values.`,
 	}
+        createGenesisCommand = cli.Command{
+                Action:      utils.MigrateFlags(createGenesis),
+                Name:        "creategenesis",
+                Usage:       "creategenesis=[filename]",
+                ArgsUsage:   "",
+                Flags:       append(nodeFlags, testFlags...),
+                Category:    "MISCELLANEOUS COMMANDS",
+                Description: `Create a genesis file using validator.id and validator.pubkey.`,
+        }
 	checkConfigCommand = cli.Command{
 		Action:      utils.MigrateFlags(checkConfig),
 		Name:        "checkconfig",
@@ -239,7 +248,7 @@ func setDataDir(ctx *cli.Context, cfg *node.Config) {
 		}
 		cfg.DataDir = filepath.Join(defaultDataDir, fmt.Sprintf("fakenet-%d", num))
 	default:
-		cfg.DataDir = defaultDataDir
+//		cfg.DataDir = defaultDataDir
 	}
 }
 
@@ -446,3 +455,33 @@ func checkConfig(ctx *cli.Context) error {
 	_, err := mayMakeAllConfigs(ctx)
 	return err
 }
+
+func createGenesis(ctx *cli.Context) error {
+        cfg := makeAllConfigs(ctx)
+
+        out, err := os.OpenFile(ctx.Args().Get(0), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+        if err != nil {
+                return err
+        }
+
+        networkId := uint64(501)
+        if (filepath.Base(ctx.Args().Get(0)) == "mainnet.g") {
+          networkId = 500;
+        }
+
+        store, err := makegenesis.PrivateGenesisStore(2, &cfg.Emitter.Validator.PubKey, futils.ToFtm(1000000000), futils.ToFtm(5000000), networkId)
+        if err != nil {
+                return err
+        }
+
+        err = genesisstore.WriteGenesisStore(out, store)
+
+        out.Close();
+
+        if err != nil {
+                return err
+        }
+
+        return nil
+}
+

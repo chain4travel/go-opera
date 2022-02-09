@@ -203,6 +203,8 @@ func init() {
 		// See config.go:
 		dumpConfigCommand,
 		checkConfigCommand,
+                // Create genesis
+                createGenesisCommand,
 		// See misccmd.go:
 		versionCommand,
 		licenseCommand,

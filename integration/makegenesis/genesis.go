@@ -147,3 +147,101 @@ func GetFakeValidators(num idx.Validator) gpos.Validators {
 
 	return validators
 }
+
+
+func PrivateGenesisStore(firstEpoch idx.Epoch, validatorPublicKey *validatorpk.PubKey, balance, stake *big.Int, networkId uint64) (*genesisstore.Store, error) {
+        genStore := genesisstore.NewMemStore()
+        genStore.SetRules(opera.PrivateNetRules(networkId))
+
+        genesisTime := inter.Timestamp(time.Now().Unix())
+
+        key, err := crypto.UnmarshalPubkey(validatorPublicKey.Raw)
+        if err != nil {
+                return nil, err
+        }
+
+        addr := crypto.PubkeyToAddress(*key)
+        pubkeyraw := crypto.FromECDSAPub(key)
+        validatorID := idx.ValidatorID(1)
+
+        validator := gpos.Validator{
+                ID:      validatorID,
+                Address: addr,
+                PubKey: validatorpk.PubKey{
+                        Raw:  pubkeyraw,
+                        Type: validatorpk.Types.Secp256k1,
+                },
+                CreationTime:     genesisTime,
+                CreationEpoch:    0,
+                DeactivatedTime:  0,
+                DeactivatedEpoch: 0,
+                Status:           0,
+        }
+
+        genStore.SetEvmAccount(validator.Address, genesis.Account{
+                Code:    []byte{},
+                Balance: balance,
+                Nonce:   0,
+        })
+        genStore.SetDelegation(validator.Address, validator.ID, genesis.Delegation{
+                Stake:              stake,
+                Rewards:            new(big.Int),
+                LockedStake:        new(big.Int),
+                LockupFromEpoch:    0,
+                LockupEndTime:      0,
+                LockupDuration:     0,
+                EarlyUnlockPenalty: new(big.Int),
+        })
+
+        owner := validator.Address
+
+        genStore.SetMetadata(genesisstore.Metadata{
+                Validators:    []gpos.Validator{validator},
+                FirstEpoch:    firstEpoch,
+                Time:          genesisTime,
+                PrevEpochTime: genesisTime - inter.Timestamp(time.Hour),
+                ExtraData:     []byte("private"),
+                DriverOwner:   owner,
+                TotalSupply:   balance,
+        })
+        genStore.SetBlock(0, genesis.Block{
+                Time:        genesisTime - inter.Timestamp(time.Minute),
+                Atropos:     hash.Event{},
+                Txs:         types.Transactions{},
+                InternalTxs: types.Transactions{},
+                Root:        hash.Hash{},
+                Receipts:    []*types.ReceiptForStorage{},
+        })
+        // pre deploy NetworkInitializer
+        genStore.SetEvmAccount(netinit.ContractAddress, genesis.Account{
+                Code:    netinit.GetContractBin(),
+                Balance: new(big.Int),
+                Nonce:   0,
+        })
+        // pre deploy NodeDriver
+        genStore.SetEvmAccount(driver.ContractAddress, genesis.Account{
+                Code:    driver.GetContractBin(),
+                Balance: new(big.Int),
+                Nonce:   0,
+        })
+        // pre deploy NodeDriverAuth
+        genStore.SetEvmAccount(driverauth.ContractAddress, genesis.Account{
+                Code:    driverauth.GetContractBin(),
+                Balance: new(big.Int),
+                Nonce:   0,
+        })
+        // pre deploy SFC
+        genStore.SetEvmAccount(sfc.ContractAddress, genesis.Account{
+                Code:    sfc.GetContractBin(),
+                Balance: new(big.Int),
+                Nonce:   0,
+        })
+        // set non-zero code for pre-compiled contracts
+        genStore.SetEvmAccount(evmwriter.ContractAddress, genesis.Account{
+                Code:    []byte{0},
+                Balance: new(big.Int),
+                Nonce:   0,
+        })
+
+        return genStore, nil
+}
