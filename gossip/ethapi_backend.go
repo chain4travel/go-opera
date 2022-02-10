@@ -615,3 +615,12 @@ func (b *EthAPIBackend) SealedEpochTiming(ctx context.Context) (start inter.Time
 	es := b.svc.store.GetEpochState()
 	return es.PrevEpochStart, es.EpochStart
 }
+
+func (b *EthAPIBackend) ProtocolVersion() int {
+	return ProtocolVersion
+}
+
+func (b *EthAPIBackend) FeeHistory(ctx context.Context, blockCount int, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (firstBlock *big.Int, reward [][]*big.Int, baseFee []*big.Int, gasUsedRatio []float64, err error) {
+	return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
+	//return b.svc.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
+}
