@@ -152,7 +152,7 @@ func PrivateGenesisStore(firstEpoch idx.Epoch, validatorPublicKey *validatorpk.P
 	genStore := genesisstore.NewMemStore()
 	genStore.SetRules(opera.PrivateNetRules(networkId))
 
-	genesisTime := inter.Timestamp(time.Now().Unix())
+	genesisTime := inter.Timestamp(time.Now().UnixNano())
 
 	key, err := crypto.UnmarshalPubkey(validatorPublicKey.Raw)
 	if err != nil {

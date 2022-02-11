@@ -40,6 +40,7 @@ type Emitter struct {
 
 	prevIdleTime       time.Time
 	prevEmittedAtTime  time.Time
+	emitTryAtTime      time.Time
 	prevEmittedAtBlock idx.Block
 	originatedTxs      *originatedtxs.Buffer
 	pendingGas         uint64
@@ -145,6 +146,7 @@ func (em *Emitter) Start() {
 		return
 	}
 	em.wg.Add(1)
+
 	go func() {
 		defer em.wg.Done()
 		tick := 11 * time.Millisecond
@@ -197,7 +199,7 @@ func (em *Emitter) tick() {
 
 	em.recheckChallenges()
 	em.recheckIdleTime()
-	if time.Since(em.prevEmittedAtTime) >= em.intervals.Min {
+	if time.Since(em.emitTryAtTime) >= em.intervals.Min {
 		_, _ = em.EmitEvent()
 	}
 }
@@ -246,6 +248,7 @@ func (em *Emitter) EmitEvent() (*inter.EventPayload, error) {
 
 	e, err := em.createEvent(sortedTxs)
 	if e == nil || err != nil {
+		em.emitTryAtTime = time.Now()
 		return nil, err
 	}
 	em.syncStatus.prevLocalEmittedID = e.ID()
@@ -266,7 +269,9 @@ func (em *Emitter) EmitEvent() (*inter.EventPayload, error) {
 	// broadcast the event
 	em.world.Broadcast(e)
 
-	em.prevEmittedAtTime = time.Now() // record time after connecting, to add the event processing time"
+	em.emitTryAtTime = time.Now()
+	em.prevEmittedAtTime = em.emitTryAtTime
+	// record time after connecting, to add the event processing time"
 	em.prevEmittedAtBlock = em.world.GetLatestBlockIndex()
 
 	// metrics
