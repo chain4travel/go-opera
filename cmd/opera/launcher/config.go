@@ -469,7 +469,7 @@ func createGenesis(ctx *cli.Context) error {
 		networkId = 500
 	}
 
-	store, err := makegenesis.PrivateGenesisStore(2, &cfg.Emitter.Validator.PubKey, futils.ToFtm(1000000000), futils.ToFtm(5000000), networkId)
+	store, err := makegenesis.PrivateGenesisStore(2, &cfg.Emitter.Validator.PubKey, futils.ToFtm(999500000), futils.ToFtm(500000), networkId)
 	if err != nil {
 		return err
 	}
