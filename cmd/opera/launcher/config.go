@@ -104,6 +104,12 @@ var (
 		Value: "full",
 	}
 
+	ChainIdFlag = cli.Uint64Flag{
+		Name:  "creategenesis.chainid",
+		Usage: `ChainId used for private network`,
+		Value: 0,
+	}
+
 	AllowedOperaGenesisHashes = map[uint64]hash.Hash{
 		opera.MainNetworkID: hash.HexToHash("0x4a53c5445584b3bfc20dbfb2ec18ae20037c716f3ba2d9e1da768a9deca17cb4"),
 		opera.TestNetworkID: hash.HexToHash("0xc4a5fc96e575a16a9a0c7349d44dc4d0f602a54e0a8543360c2fee4c3937b49e"),
@@ -459,17 +465,18 @@ func checkConfig(ctx *cli.Context) error {
 func createGenesis(ctx *cli.Context) error {
 	cfg := makeAllConfigs(ctx)
 
-	out, err := os.OpenFile(ctx.Args().Get(0), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if !ctx.GlobalIsSet(ChainIdFlag.Name) {
+		return errors.New("creategenesis.chainid is mandatory when creating a genesis file")
+	}
+
+	networkId := ctx.GlobalUint64(ChainIdFlag.Name)
+
+	store, err := makegenesis.PrivateGenesisStore(2, &cfg.Emitter.Validator.PubKey, futils.ToFtm(999500000), futils.ToFtm(500000), networkId)
 	if err != nil {
 		return err
 	}
 
-	networkId := uint64(501)
-	if filepath.Base(ctx.Args().Get(0)) == "mainnet.g" {
-		networkId = 500
-	}
-
-	store, err := makegenesis.PrivateGenesisStore(2, &cfg.Emitter.Validator.PubKey, futils.ToFtm(999500000), futils.ToFtm(500000), networkId)
+	out, err := os.OpenFile(ctx.Args().Get(0), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
