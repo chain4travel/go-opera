@@ -47,6 +47,7 @@ import (
 
 	"github.com/Fantom-foundation/go-opera/evmcore"
 	"github.com/Fantom-foundation/go-opera/opera"
+	"github.com/Fantom-foundation/go-opera/opera/genesis/sfc"
 	"github.com/Fantom-foundation/go-opera/utils/gsignercache"
 )
 
@@ -142,6 +143,16 @@ func (s *PublicEthereumAPI) Syncing() (interface{}, error) {
 		"pulledStates":     hexutil.Uint64(0), // back-compatibility
 		"knownStates":      hexutil.Uint64(0), // back-compatibility
 	}, nil
+}
+
+type SFC_INTERFACE struct {
+	Address common.Address `json:"address"`
+	Abi     string         `json:"abi"`
+}
+
+// MaxPriorityFeePerGas returns a suggestion for a gas tip cap for dynamic fee transactions.
+func (s *PublicEthereumAPI) GetSfcInterface(ctx context.Context) *SFC_INTERFACE {
+	return &SFC_INTERFACE{Address: sfc.ContractAddress, Abi: sfc.ContractABI}
 }
 
 // PublicTxPoolAPI offers and API for the transaction pool. It only operates on data that is non confidential.
