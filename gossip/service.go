@@ -209,9 +209,6 @@ func newService(config Config, store *Store, blockProc BlockProc, engine lachesi
 	svc.store.GetLastEVs()
 	svc.store.GetLlrState()
 
-	// create GPO
-	svc.gpo = gasprice.NewOracle(&GPOBackend{store}, svc.config.GPO)
-
 	// create checkers
 	net := store.GetRules()
 	txSigner := gsignercache.Wrap(types.LatestSignerForChainID(net.EvmChainConfig().ChainID))
@@ -264,6 +261,9 @@ func newService(config Config, store *Store, blockProc BlockProc, engine lachesi
 
 	// create API backend
 	svc.EthAPI = &EthAPIBackend{config.ExtRPCEnabled, svc, stateReader, txSigner, config.AllowUnprotectedTxs}
+
+	// create GPO
+	svc.gpo = gasprice.NewOracle(&GPOBackend{store}, svc.EthAPI, svc.config.GPO)
 
 	svc.verWatcher = verwatcher.New(config.VersionWatcher, verwatcher.NewStore(store.table.NetworkVersion))
 	svc.tflusher = svc.makePeriodicFlusher()

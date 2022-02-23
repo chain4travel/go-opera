@@ -34,26 +34,26 @@ func (t TestBackend) GetPendingRules() opera.Rules {
 }
 
 func TestConstructor(t *testing.T) {
-	gpo := NewOracle(nil, Config{})
+	gpo := NewOracle(nil, nil, Config{})
 	require.Equal(t, "0", gpo.cfg.MinTipCap.String())
 	require.Equal(t, DefaultMaxTipCap.String(), gpo.cfg.MaxTipCap.String())
 	require.Equal(t, big.NewInt(2*DecimalUnit).String(), gpo.cfg.MiddleTipCapMultiplierRatio.String())
 	require.Equal(t, big.NewInt(10*DecimalUnit).String(), gpo.cfg.MaxTipCapMultiplierRatio.String())
 	require.Equal(t, "1", gpo.cfg.GasPowerWallRatio.String())
 
-	gpo = NewOracle(nil, Config{
+	gpo = NewOracle(nil, nil, Config{
 		GasPowerWallRatio: big.NewInt(2 * DecimalUnit),
 	})
 	require.Equal(t, "999998", gpo.cfg.GasPowerWallRatio.String())
 
-	gpo = NewOracle(nil, Config{
+	gpo = NewOracle(nil, nil, Config{
 		MiddleTipCapMultiplierRatio: big.NewInt(0.5 * DecimalUnit),
 		MaxTipCapMultiplierRatio:    big.NewInt(0.5 * DecimalUnit),
 	})
 	require.Equal(t, DecimalUnitBn.String(), gpo.cfg.MiddleTipCapMultiplierRatio.String())
 	require.Equal(t, DecimalUnitBn.String(), gpo.cfg.MaxTipCapMultiplierRatio.String())
 
-	gpo = NewOracle(nil, Config{
+	gpo = NewOracle(nil, nil, Config{
 		MiddleTipCapMultiplierRatio: big.NewInt(3 * DecimalUnit),
 		MaxTipCapMultiplierRatio:    big.NewInt(2 * DecimalUnit),
 	})
@@ -68,7 +68,7 @@ func TestSuggestTipCap(t *testing.T) {
 		pendingRules:      opera.FakeNetRules(),
 	}
 
-	gpo := NewOracle(backend, Config{})
+	gpo := NewOracle(backend, nil, Config{})
 
 	maxMul := big.NewInt(9 * DecimalUnit)
 	gpo.cfg.MiddleTipCapMultiplierRatio = big.NewInt(DecimalUnit)
@@ -134,7 +134,7 @@ func TestSuggestTipCap(t *testing.T) {
 	backend.block++
 
 	// check the maximum wall
-	gpo.cfg.GasPowerWallRatio = NewOracle(nil, Config{
+	gpo.cfg.GasPowerWallRatio = NewOracle(nil, nil, Config{
 		GasPowerWallRatio: DecimalUnitBn,
 	}).cfg.GasPowerWallRatio
 	require.Equal(t, "100000000000", gpo.SuggestTipCap().String())

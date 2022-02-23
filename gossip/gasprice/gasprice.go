@@ -17,14 +17,22 @@
 package gasprice
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"sync"
 	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/rpc"
+	lru "github.com/hashicorp/golang-lru"
 
+	"github.com/Fantom-foundation/go-opera/evmcore"
 	"github.com/Fantom-foundation/go-opera/opera"
 	"github.com/Fantom-foundation/go-opera/utils/piecefunc"
 
@@ -46,6 +54,17 @@ type Config struct {
 	MaxTipCapMultiplierRatio    *big.Int `toml:",omitempty"`
 	MiddleTipCapMultiplierRatio *big.Int `toml:",omitempty"`
 	GasPowerWallRatio           *big.Int `toml:",omitempty"`
+	MaxHeaderHistory            int
+	MaxBlockHistory             int
+}
+
+// EthBackend includes all necessary background APIs for oracle.
+type EthBackend interface {
+	PendingBlockAndReceipts() (*types.Block, types.Receipts)
+	GetReceipts(ctx context.Context, block common.Hash) (types.Receipts, error)
+	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmHeader, error)
+	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmBlock, error)
+	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 }
 
 type Reader interface {
@@ -64,11 +83,13 @@ type cache struct {
 // Oracle recommends gas prices based on the content of recent
 // blocks. Suitable for both light and full clients.
 type Oracle struct {
-	backend Reader
+	backend    Reader
+	ethBackend EthBackend
+	cfg        Config
+	cache      cache
 
-	cfg Config
-
-	cache cache
+	maxHeaderHistory, maxBlockHistory int
+	historyCache                      *lru.Cache
 }
 
 func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
@@ -89,15 +110,33 @@ func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
 
 // NewOracle returns a new gasprice oracle which can recommend suitable
 // gasprice for newly created transaction.
-func NewOracle(backend Reader, params Config) *Oracle {
+func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MaxTipCap = sanitizeBigInt(params.MaxTipCap, nil, nil, DefaultMaxTipCap, "MaxTipCap")
 	params.MinTipCap = sanitizeBigInt(params.MinTipCap, nil, nil, new(big.Int), "MinTipCap")
 	params.GasPowerWallRatio = sanitizeBigInt(params.GasPowerWallRatio, big.NewInt(1), big.NewInt(DecimalUnit-2), big.NewInt(1), "GasPowerWallRatio")
 	params.MaxTipCapMultiplierRatio = sanitizeBigInt(params.MaxTipCapMultiplierRatio, DecimalUnitBn, nil, big.NewInt(10*DecimalUnit), "MaxTipCapMultiplierRatio")
 	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
+
+	cache, _ := lru.New(2048)
+	headEvent := make(chan core.ChainHeadEvent, 1)
+	ethBackend.SubscribeChainHeadEvent(headEvent)
+	go func() {
+		var lastHead common.Hash
+		for ev := range headEvent {
+			if ev.Block.ParentHash() != lastHead {
+				cache.Purge()
+			}
+			lastHead = ev.Block.Hash()
+		}
+	}()
+
 	return &Oracle{
-		backend: backend,
-		cfg:     params,
+		backend:          backend,
+		ethBackend:       ethBackend,
+		cfg:              params,
+		maxHeaderHistory: params.MaxHeaderHistory,
+		maxBlockHistory:  params.MaxBlockHistory,
+		historyCache:     cache,
 	}
 }
 
