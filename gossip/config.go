@@ -208,8 +208,8 @@ func DefaultConfig(scale cachescale.Func) Config {
 			MaxTipCapMultiplierRatio:    big.NewInt(25 * gasprice.DecimalUnit),
 			MiddleTipCapMultiplierRatio: big.NewInt(3.75 * gasprice.DecimalUnit),
 			GasPowerWallRatio:           big.NewInt(0.05 * gasprice.DecimalUnit),
-			MaxHeaderHistory:            100,
-			MaxBlockHistory:             100,
+			MaxHeaderHistory:            1024,
+			MaxBlockHistory:             1024,
 		},
 
 		VersionWatcher: verwatcher.Config{
