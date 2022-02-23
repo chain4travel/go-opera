@@ -26,9 +26,8 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/inter/idx"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/event"
+	notify "github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/rpc"
 	lru "github.com/hashicorp/golang-lru"
 
@@ -64,7 +63,7 @@ type EthBackend interface {
 	GetReceipts(ctx context.Context, block common.Hash) (types.Receipts, error)
 	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmHeader, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmBlock, error)
-	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
+	SubscribeNewBlockNotify(ch chan<- evmcore.ChainHeadNotify) notify.Subscription
 }
 
 type Reader interface {
@@ -118,15 +117,15 @@ func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
 
 	cache, _ := lru.New(2048)
-	headEvent := make(chan core.ChainHeadEvent, 1)
-	ethBackend.SubscribeChainHeadEvent(headEvent)
+	headEvent := make(chan evmcore.ChainHeadNotify, 1)
+	ethBackend.SubscribeNewBlockNotify(headEvent)
 	go func() {
 		var lastHead common.Hash
 		for ev := range headEvent {
-			if ev.Block.ParentHash() != lastHead {
+			if ev.Block.ParentHash != lastHead {
 				cache.Purge()
 			}
-			lastHead = ev.Block.Hash()
+			lastHead = ev.Block.Hash
 		}
 	}()
 

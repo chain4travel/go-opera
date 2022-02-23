@@ -12,12 +12,10 @@ import (
 	"github.com/Fantom-foundation/lachesis-base/inter/pos"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/event"
 	notify "github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -179,10 +177,6 @@ func (b *EthAPIBackend) GetEvent(ctx context.Context, shortEventID string) (*int
 
 func (b *EthAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	return nil, nil
-}
-
-func (b *EthAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-
 }
 
 // GetHeads returns IDs of all the epoch events with no descendants.
@@ -631,6 +625,6 @@ func (b *EthAPIBackend) ProtocolVersion() int {
 }
 
 func (b *EthAPIBackend) FeeHistory(ctx context.Context, blockCount int, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (firstBlock *big.Int, reward [][]*big.Int, baseFee []*big.Int, gasUsedRatio []float64, err error) {
-	return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
-	//return b.svc.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
+	//return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
+	return b.svc.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }

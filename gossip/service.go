@@ -217,9 +217,17 @@ func newService(config Config, store *Store, blockProc BlockProc, engine lachesi
 	svc.gasPowerCheckReader.Ctx.Store(NewGasPowerContext(svc.store, svc.store.GetValidators(), svc.store.GetEpoch(), net.Economy)) // read gaspower check data from DB
 	svc.checkers = makeCheckers(config.HeavyCheck, txSigner, &svc.heavyCheckReader, &svc.gasPowerCheckReader, svc.store)
 
+	statereader := svc.GetEvmStateReader()
+
+	// create API backend
+	svc.EthAPI = &EthAPIBackend{config.ExtRPCEnabled, svc, statereader, txSigner, config.AllowUnprotectedTxs}
+
+	// create GPO
+	svc.gpo = gasprice.NewOracle(&GPOBackend{store}, svc.EthAPI, svc.config.GPO)
+	statereader.gpo = svc.gpo
+
 	// create tx pool
-	stateReader := svc.GetEvmStateReader()
-	svc.txpool = newTxPool(stateReader)
+	svc.txpool = newTxPool(statereader)
 
 	// init dialCandidates
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
@@ -258,12 +266,6 @@ func newService(config Config, store *Store, blockProc BlockProc, engine lachesi
 	if err != nil {
 		return nil, err
 	}
-
-	// create API backend
-	svc.EthAPI = &EthAPIBackend{config.ExtRPCEnabled, svc, stateReader, txSigner, config.AllowUnprotectedTxs}
-
-	// create GPO
-	svc.gpo = gasprice.NewOracle(&GPOBackend{store}, svc.EthAPI, svc.config.GPO)
 
 	svc.verWatcher = verwatcher.New(config.VersionWatcher, verwatcher.NewStore(store.table.NetworkVersion))
 	svc.tflusher = svc.makePeriodicFlusher()

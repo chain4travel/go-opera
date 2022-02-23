@@ -270,6 +270,10 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 							fees.err = err
 						}
 						if fees.header != nil && fees.err == nil {
+							if fees.header.BaseFee == nil {
+								fees.header.BaseFee = new(big.Int)
+							}
+
 							oracle.processBlock(fees, rewardPercentiles)
 							if fees.err == nil {
 								oracle.historyCache.Add(cacheKey, fees.results)
