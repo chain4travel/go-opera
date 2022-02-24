@@ -170,10 +170,11 @@ func (oracle *Oracle) resolveBlockRange(ctx context.Context, lastBlock rpc.Block
 	} else if pendingBlock == nil && lastBlock > headBlock {
 		return nil, nil, 0, 0, fmt.Errorf("%w: requested %d, head %d", errRequestBeyondHead, lastBlock, headBlock)
 	}
-	// ensure not trying to retrieve before genesis
-	if rpc.BlockNumber(blocks) > lastBlock+1 {
-		blocks = int(lastBlock + 1)
+	// ensure not trying to retrieve anything at or before genesis (the genesis block is removed by intention as it doesn't contain a baseFee)
+	if rpc.BlockNumber(blocks) > lastBlock {
+		blocks = int(lastBlock)
 	}
+
 	return pendingBlock, pendingReceipts, uint64(lastBlock), blocks, nil
 }
 
