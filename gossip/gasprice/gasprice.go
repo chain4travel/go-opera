@@ -117,17 +117,19 @@ func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
 
 	cache, _ := lru.New(2048)
-	headEvent := make(chan evmcore.ChainHeadNotify, 1)
-	ethBackend.SubscribeNewBlockNotify(headEvent)
-	go func() {
-		var lastHead common.Hash
-		for ev := range headEvent {
-			if ev.Block.ParentHash != lastHead {
-				cache.Purge()
+	if ethBackend != nil {
+		headEvent := make(chan evmcore.ChainHeadNotify, 1)
+		ethBackend.SubscribeNewBlockNotify(headEvent)
+		go func() {
+			var lastHead common.Hash
+			for ev := range headEvent {
+				if ev.Block.ParentHash != lastHead {
+					cache.Purge()
+				}
+				lastHead = ev.Block.Hash
 			}
-			lastHead = ev.Block.Hash
-		}
-	}()
+		}()
+	}
 
 	return &Oracle{
 		backend:          backend,

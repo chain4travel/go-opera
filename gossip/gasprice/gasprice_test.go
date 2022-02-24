@@ -33,6 +33,15 @@ func (t TestBackend) GetPendingRules() opera.Rules {
 	return t.pendingRules
 }
 
+func newTestBackend() *TestBackend {
+	return &TestBackend{
+		block:             1,
+		totalGasPowerLeft: 0,
+		rules:             opera.FakeNetRules(),
+		pendingRules:      opera.FakeNetRules(),
+	}
+}
+
 func TestConstructor(t *testing.T) {
 	gpo := NewOracle(nil, nil, Config{})
 	require.Equal(t, "0", gpo.cfg.MinTipCap.String())
@@ -61,13 +70,8 @@ func TestConstructor(t *testing.T) {
 }
 
 func TestSuggestTipCap(t *testing.T) {
-	backend := &TestBackend{
-		block:             1,
-		totalGasPowerLeft: 0,
-		rules:             opera.FakeNetRules(),
-		pendingRules:      opera.FakeNetRules(),
-	}
 
+	backend := newTestBackend()
 	gpo := NewOracle(backend, nil, Config{})
 
 	maxMul := big.NewInt(9 * DecimalUnit)

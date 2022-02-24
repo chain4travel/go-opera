@@ -16,79 +16,55 @@
 
 package gasprice
 
-/*
+import (
+	"context"
+	"errors"
+	"math/big"
+	"testing"
 
-////// TODO: That won't work for now - implement working test for the fee history
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	notify "github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/rpc"
 
-const testHead = 32
+	"github.com/Fantom-foundation/go-opera/evmcore"
+	"github.com/Fantom-foundation/go-opera/opera"
+	"github.com/Fantom-foundation/lachesis-base/inter/idx"
+)
 
-type testBackend struct {
-	chain   *core.BlockChain
-	pending bool // pending block available
+// EthBackend includes all necessary background APIs for oracle.
+type TestEthBackend struct {
+	block idx.Block
 }
 
-func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBackend {
-	var (
-		key, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		addr   = crypto.PubkeyToAddress(key.PublicKey)
-		gspec  = &core.Genesis{
-			Config: params.TestChainConfig,
-			Alloc:  core.GenesisAlloc{addr: {Balance: big.NewInt(math.MaxInt64)}},
-		}
-		signer = types.LatestSigner(gspec.Config)
-	)
-	if londonBlock != nil {
-		gspec.Config.LondonBlock = londonBlock
-		signer = types.LatestSigner(gspec.Config)
-	} else {
-		gspec.Config.LondonBlock = nil
-	}
-	engine := ethash.NewFaker()
-	db := rawdb.NewMemoryDatabase()
-	genesis, _ := gspec.Commit(db)
+func (t TestEthBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
+}
 
-	// Generate testing blocks
-	blocks, _ := core.GenerateChain(gspec.Config, genesis, engine, db, testHead+1, func(i int, b *core.BlockGen) {
-		b.SetCoinbase(common.Address{1})
+func (t TestEthBackend) GetReceipts(ctx context.Context, block common.Hash) (types.Receipts, error) {
+	return nil, nil
+}
 
-		var tx *types.Transaction
-		if londonBlock != nil && b.Number().Cmp(londonBlock) >= 0 {
-			txdata := &types.DynamicFeeTx{
-				ChainID:   gspec.Config.ChainID,
-				Nonce:     b.TxNonce(addr),
-				To:        &common.Address{},
-				Gas:       30000,
-				GasFeeCap: big.NewInt(100 * params.GWei),
-				GasTipCap: big.NewInt(int64(i+1) * params.GWei),
-				Data:      []byte{},
-			}
-			tx = types.NewTx(txdata)
-		} else {
-			txdata := &types.LegacyTx{
-				Nonce:    b.TxNonce(addr),
-				To:       &common.Address{},
-				Gas:      21000,
-				GasPrice: big.NewInt(int64(i+1) * params.GWei),
-				Value:    big.NewInt(100),
-				Data:     []byte{},
-			}
-			tx = types.NewTx(txdata)
-		}
-		tx, err := types.SignTx(tx, signer, key)
-		if err != nil {
-			t.Fatalf("failed to create tx: %v", err)
-		}
-		b.AddTx(tx)
-	})
-	// Construct testing chain
-	diskdb := rawdb.NewMemoryDatabase()
-	gspec.Commit(diskdb)
-	chain, err := core.NewBlockChain(diskdb, nil, gspec.Config, engine, vm.Config{}, nil, nil)
-	if err != nil {
-		t.Fatalf("Failed to create local chain, %v", err)
+func (t TestEthBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmHeader, error) {
+	if number == rpc.LatestBlockNumber {
+		number = rpc.BlockNumber(t.block)
 	}
-	chain.InsertChain(blocks)
-	return &testBackend{chain: chain, pending: pending}
+	return &evmcore.EvmHeader{
+		Number:  big.NewInt(number.Int64()),
+		BaseFee: opera.FakeNetRules().Economy.MinGasPrice,
+	}, nil
+}
+
+func (t TestEthBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*evmcore.EvmBlock, error) {
+	return &evmcore.EvmBlock{}, nil
+}
+
+func (t TestEthBackend) SubscribeNewBlockNotify(ch chan<- evmcore.ChainHeadNotify) notify.Subscription {
+	return nil
+}
+
+func newEthBackend(block idx.Block) *TestEthBackend {
+	return &TestEthBackend{block}
 }
 
 func TestFeeHistory(t *testing.T) {
@@ -105,8 +81,8 @@ func TestFeeHistory(t *testing.T) {
 		{false, 1000, 1000, 10, 30, nil, 21, 10, nil},
 		{false, 1000, 1000, 10, 30, []float64{0, 10}, 21, 10, nil},
 		{false, 1000, 1000, 10, 30, []float64{20, 10}, 0, 0, errInvalidPercentile},
-		{false, 1000, 1000, 1000000000, 30, nil, 0, 31, nil},
-		{false, 1000, 1000, 1000000000, rpc.LatestBlockNumber, nil, 0, 33, nil},
+		{false, 1000, 1000, 1000000000, 30, nil, 1, 30, nil},
+		{false, 1000, 1000, 1000000000, rpc.LatestBlockNumber, nil, 1, 32, nil},
 		{false, 1000, 1000, 10, 40, nil, 0, 0, errRequestBeyondHead},
 		{true, 1000, 1000, 10, 40, nil, 0, 0, errRequestBeyondHead},
 		{false, 20, 2, 100, rpc.LatestBlockNumber, nil, 13, 20, nil},
@@ -114,16 +90,15 @@ func TestFeeHistory(t *testing.T) {
 		{false, 20, 2, 100, 32, []float64{0, 10}, 31, 2, nil},
 		{false, 1000, 1000, 1, rpc.PendingBlockNumber, nil, 0, 0, nil},
 		{false, 1000, 1000, 2, rpc.PendingBlockNumber, nil, 32, 1, nil},
-		{true, 1000, 1000, 2, rpc.PendingBlockNumber, nil, 32, 2, nil},
-		{true, 1000, 1000, 2, rpc.PendingBlockNumber, []float64{0, 10}, 32, 2, nil},
+		{true, 1000, 1000, 2, rpc.PendingBlockNumber, nil, 32, 1, nil},
+		{true, 1000, 1000, 2, rpc.PendingBlockNumber, []float64{0, 10}, 32, 1, nil},
 	}
 	for i, c := range cases {
 		config := Config{
 			MaxHeaderHistory: c.maxHeader,
 			MaxBlockHistory:  c.maxBlock,
 		}
-		backend := newTestBackend(t, big.NewInt(16), c.pending)
-		oracle := NewOracle(backend, config)
+		oracle := NewOracle(newTestBackend(), newEthBackend(32), config)
 
 		first, reward, baseFee, ratio, err := oracle.FeeHistory(context.Background(), c.count, c.last, c.percent)
 
@@ -153,5 +128,3 @@ func TestFeeHistory(t *testing.T) {
 		}
 	}
 }
-
-*/
