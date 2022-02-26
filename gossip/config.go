@@ -234,7 +234,7 @@ func DefaultConfig(scale cachescale.Func) Config {
 
 func (c *Config) Validate() error {
 	p := c.Protocol
-	defaultChunkSize := dag.Metric{idx.Event(p.DagStreamLeecher.Session.DefaultChunkItemsNum), p.DagStreamLeecher.Session.DefaultChunkItemsSize}
+	defaultChunkSize := dag.Metric{Num: idx.Event(p.DagStreamLeecher.Session.DefaultChunkItemsNum), Size: p.DagStreamLeecher.Session.DefaultChunkItemsSize}
 	if defaultChunkSize.Num > hardLimitItems-1 {
 		return fmt.Errorf("DefaultChunkSize.Num has to be at not greater than %d", hardLimitItems-1)
 	}
