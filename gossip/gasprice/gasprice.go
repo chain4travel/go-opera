@@ -49,7 +49,6 @@ var DecimalUnitBn = big.NewInt(DecimalUnit)
 
 type Config struct {
 	MaxTipCap                   *big.Int `toml:",omitempty"`
-	MinTipCap                   *big.Int `toml:",omitempty"`
 	MaxTipCapMultiplierRatio    *big.Int `toml:",omitempty"`
 	MiddleTipCapMultiplierRatio *big.Int `toml:",omitempty"`
 	GasPowerWallRatio           *big.Int `toml:",omitempty"`
@@ -111,7 +110,6 @@ func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
 // gasprice for newly created transaction.
 func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MaxTipCap = sanitizeBigInt(params.MaxTipCap, nil, nil, DefaultMaxTipCap, "MaxTipCap")
-	params.MinTipCap = sanitizeBigInt(params.MinTipCap, nil, nil, new(big.Int), "MinTipCap")
 	params.GasPowerWallRatio = sanitizeBigInt(params.GasPowerWallRatio, big.NewInt(1), big.NewInt(DecimalUnit-2), big.NewInt(1), "GasPowerWallRatio")
 	params.MaxTipCapMultiplierRatio = sanitizeBigInt(params.MaxTipCapMultiplierRatio, DecimalUnitBn, nil, big.NewInt(10*DecimalUnit), "MaxTipCapMultiplierRatio")
 	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
@@ -185,8 +183,7 @@ func (gpo *Oracle) suggestTipCap() *big.Int {
 	multiplier := new(big.Int).SetUint64(multiplierFn(freeRatio))
 
 	minPrice := gpo.backend.GetRules().Economy.MinGasPrice
-	pendingMinPrice := gpo.backend.GetPendingRules().Economy.MinGasPrice
-	adjustedMinPrice := math.BigMax(minPrice, pendingMinPrice)
+	adjustedMinPrice := math.BigMax(minPrice, gpo.backend.GetPendingRules().Economy.MinGasPrice)
 
 	// tip cap = (multiplier * adjustedMinPrice + adjustedMinPrice) - minPrice
 	tip := multiplier.Mul(multiplier, adjustedMinPrice)
@@ -194,8 +191,12 @@ func (gpo *Oracle) suggestTipCap() *big.Int {
 	tip.Add(tip, adjustedMinPrice)
 	tip.Sub(tip, minPrice)
 
-	if tip.Cmp(gpo.cfg.MinTipCap) < 0 {
-		return gpo.cfg.MinTipCap
+	adjustedMinTipCap := math.BigMax(
+		gpo.backend.GetRules().Economy.MinGasTip,
+		gpo.backend.GetPendingRules().Economy.MinGasTip)
+
+	if tip.Cmp(adjustedMinTipCap) < 0 {
+		return adjustedMinTipCap
 	}
 	if tip.Cmp(gpo.cfg.MaxTipCap) > 0 {
 		return gpo.cfg.MaxTipCap

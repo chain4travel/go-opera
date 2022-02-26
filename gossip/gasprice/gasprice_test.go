@@ -44,7 +44,6 @@ func newTestBackend() *TestBackend {
 
 func TestConstructor(t *testing.T) {
 	gpo := NewOracle(nil, nil, Config{})
-	require.Equal(t, "0", gpo.cfg.MinTipCap.String())
 	require.Equal(t, DefaultMaxTipCap.String(), gpo.cfg.MaxTipCap.String())
 	require.Equal(t, big.NewInt(2*DecimalUnit).String(), gpo.cfg.MiddleTipCapMultiplierRatio.String())
 	require.Equal(t, big.NewInt(10*DecimalUnit).String(), gpo.cfg.MaxTipCapMultiplierRatio.String())
@@ -151,8 +150,7 @@ func TestSuggestTipCap(t *testing.T) {
 	backend.block++
 
 	// check min price hard limit
-	gpo.cfg.MinTipCap = big.NewInt(1500000000)
 	backend.totalGasPowerLeft = gpo.maxTotalGasPower().Uint64()
-	require.Equal(t, "1500000000", gpo.SuggestTipCap().String())
+	require.Equal(t, backend.rules.Economy.MinGasTip.String(), gpo.SuggestTipCap().String())
 	backend.block++
 }

@@ -100,6 +100,7 @@ type EconomyRules struct {
 	Gas GasRules
 
 	MinGasPrice *big.Int
+	MinGasTip   *big.Int
 
 	ShortGasPower GasPowerRules
 	LongGasPower  GasPowerRules
@@ -202,6 +203,7 @@ func DefaultEconomyRules() EconomyRules {
 		BlockMissedSlack: 50,
 		Gas:              DefaultGasRules(),
 		MinGasPrice:      big.NewInt(1e9),
+		MinGasTip:        big.NewInt(1e9),
 		ShortGasPower:    DefaultShortGasPowerRules(),
 		LongGasPower:     DefaulLongGasPowerRules(),
 	}

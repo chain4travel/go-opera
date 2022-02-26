@@ -107,7 +107,7 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 	if len(bf.block.Transactions()) == 0 {
 		// return an all zero row if there are no transactions to gather data from
 		for i := range bf.results.reward {
-			bf.results.reward[i] = new(big.Int)
+			bf.results.reward[i] = oracle.backend.GetPendingRules().Economy.MinGasTip
 		}
 		return
 	}
@@ -137,7 +137,7 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 		}
 	} else {
 		for i := range bf.results.reward {
-			bf.results.reward[i] = new(big.Int)
+			bf.results.reward[i] = oracle.backend.GetPendingRules().Economy.MinGasTip
 		}
 	}
 }
