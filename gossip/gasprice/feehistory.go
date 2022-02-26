@@ -113,22 +113,32 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 	}
 
 	sorter := make(sortGasAndReward, len(bf.block.Transactions()))
+	var numValidTx int
 	for i, tx := range bf.block.Transactions() {
-		reward, _ := tx.EffectiveGasTip(bf.block.BaseFee())
-		sorter[i] = txGasAndReward{gasUsed: bf.receipts[i].GasUsed, reward: reward}
+		if reward, err := tx.EffectiveGasTip(bf.block.BaseFee()); err == nil {
+			sorter[numValidTx] = txGasAndReward{gasUsed: bf.receipts[i].GasUsed, reward: reward}
+			numValidTx++
+		}
 	}
+	sorter = sorter[:numValidTx]
 	sort.Sort(sorter)
 
-	var txIndex int
-	sumGasUsed := sorter[0].gasUsed
+	if numValidTx > 0 {
+		var txIndex int
+		sumGasUsed := sorter[0].gasUsed
 
-	for i, p := range percentiles {
-		thresholdGasUsed := uint64(float64(bf.block.GasUsed()) * p / 100)
-		for sumGasUsed < thresholdGasUsed && txIndex < len(bf.block.Transactions())-1 {
-			txIndex++
-			sumGasUsed += sorter[txIndex].gasUsed
+		for i, p := range percentiles {
+			thresholdGasUsed := uint64(float64(bf.block.GasUsed()) * p / 100)
+			for sumGasUsed < thresholdGasUsed && txIndex < numValidTx-1 {
+				txIndex++
+				sumGasUsed += sorter[txIndex].gasUsed
+			}
+			bf.results.reward[i] = sorter[txIndex].reward
 		}
-		bf.results.reward[i] = sorter[txIndex].reward
+	} else {
+		for i := range bf.results.reward {
+			bf.results.reward[i] = new(big.Int)
+		}
 	}
 }
 
