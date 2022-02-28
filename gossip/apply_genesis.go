@@ -168,7 +168,7 @@ func (s *Store) applyEpoch1Genesis(blockProc BlockProc, g opera.Genesis) (err er
 	// Execute post-internal transactions
 	internalTxs := blockProc.PostTxTransactor.PopInternalTxs(blockCtx, bs, es, sealing, statedb)
 	evmProcessor.Execute(internalTxs, true)
-	evmBlock, skippedTxs, receipts := evmProcessor.Finalize()
+	evmBlock, skippedTxs, receipts := evmProcessor.Finalize(true)
 	for _, r := range receipts {
 		if r.Status == 0 {
 			return errors.New("genesis transaction reverted")

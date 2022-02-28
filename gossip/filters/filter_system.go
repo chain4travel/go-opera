@@ -325,7 +325,6 @@ func (es *EventSystem) broadcast(filters filterIndex, ev interface{}) {
 	case evmcore.ChainHeadNotify:
 		for _, f := range filters[BlocksSubscription] {
 			h := e.Block.EthHeader()
-			h.GasLimit = 0xffffffffffff // don't use too much bits here to avoid parsing issues
 			f.headers <- h
 		}
 	}

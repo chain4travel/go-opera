@@ -88,7 +88,7 @@ func genesisBlock(g opera.Genesis, root common.Hash) *EvmBlock {
 		EvmHeader: EvmHeader{
 			Number:   big.NewInt(0),
 			Time:     g.Time,
-			GasLimit: math.MaxUint64,
+			GasLimit: math.MaxUint32,
 			Root:     root,
 			TxHash:   types.EmptyRootHash,
 			BaseFee:  g.Rules.Economy.MinGasPrice,

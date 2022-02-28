@@ -56,11 +56,16 @@ type OperaEVMProcessor struct {
 	receipts    types.Receipts
 }
 
-func (p *OperaEVMProcessor) evmBlockWith(txs types.Transactions) *evmcore.EvmBlock {
+func (p *OperaEVMProcessor) evmBlockWith(txs types.Transactions, internal bool) *evmcore.EvmBlock {
 	baseFee := p.net.Economy.MinGasPrice
 	if !p.net.Upgrades.London {
 		baseFee = nil
 	}
+	gasLimit := p.net.Blocks.MaxBlockGas
+	if internal {
+		gasLimit = math.MaxUint32
+	}
+
 	h := &evmcore.EvmHeader{
 		Number:     p.blockIdx,
 		Hash:       common.Hash(p.block.Atropos),
@@ -68,7 +73,7 @@ func (p *OperaEVMProcessor) evmBlockWith(txs types.Transactions) *evmcore.EvmBlo
 		Root:       common.Hash{},
 		Time:       p.block.Time,
 		Coinbase:   common.Address{},
-		GasLimit:   math.MaxUint64,
+		GasLimit:   gasLimit,
 		GasUsed:    p.gasUsed,
 		BaseFee:    baseFee,
 	}
@@ -81,7 +86,7 @@ func (p *OperaEVMProcessor) Execute(txs types.Transactions, internal bool) types
 	txsOffset := uint(len(p.incomingTxs))
 
 	// Process txs
-	evmBlock := p.evmBlockWith(txs)
+	evmBlock := p.evmBlockWith(txs, internal)
 	receipts, _, skipped, err := evmProcessor.Process(evmBlock, p.statedb, opera.DefaultVMConfig, &p.gasUsed, internal, func(l *types.Log, _ *state.StateDB) {
 		// Note: l.Index is properly set before
 		l.TxIndex += txsOffset
@@ -107,10 +112,11 @@ func (p *OperaEVMProcessor) Execute(txs types.Transactions, internal bool) types
 	return receipts
 }
 
-func (p *OperaEVMProcessor) Finalize() (evmBlock *evmcore.EvmBlock, skippedTxs []uint32, receipts types.Receipts) {
+func (p *OperaEVMProcessor) Finalize(internal bool) (evmBlock *evmcore.EvmBlock, skippedTxs []uint32, receipts types.Receipts) {
 	evmBlock = p.evmBlockWith(
 		// Filter skipped transactions. Receipts are filtered already
 		inter.FilterSkippedTxs(p.incomingTxs, p.skippedTxs),
+		internal,
 	)
 	skippedTxs = p.skippedTxs
 	receipts = p.receipts
