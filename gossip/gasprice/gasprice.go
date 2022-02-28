@@ -39,13 +39,13 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-var DefaultMaxTipCap = big.NewInt(100000 * params.GWei)
-
-var secondBn = big.NewInt(int64(time.Second))
-
 const DecimalUnit = piecefunc.DecimalUnit
+const baseFeeBlockTime = int64((10 * time.Second) / time.Millisecond)
 
+var DefaultMaxTipCap = big.NewInt(100000 * params.GWei)
+var secondBn = big.NewInt(int64(time.Second))
 var DecimalUnitBn = big.NewInt(DecimalUnit)
+var baseFeeBlockTimeBn = big.NewInt(baseFeeBlockTime)
 
 type Config struct {
 	MaxTipCap                   *big.Int `toml:",omitempty"`
@@ -78,6 +78,19 @@ type cache struct {
 	value *big.Int
 }
 
+type baseFees struct {
+	// Lock for headValue
+	lock      sync.RWMutex
+	blockTime *time.Time
+
+	// latest evaluated block
+	head    idx.Block
+	baseFee *big.Int
+
+	// history cache
+	cache *lru.Cache
+}
+
 // Oracle recommends gas prices based on the content of recent
 // blocks. Suitable for both light and full clients.
 type Oracle struct {
@@ -85,9 +98,11 @@ type Oracle struct {
 	ethBackend EthBackend
 	cfg        Config
 	cache      cache
+	baseFees   baseFees
 
-	maxHeaderHistory, maxBlockHistory int
-	historyCache                      *lru.Cache
+	maxHeaderHistory int
+	maxBlockHistory  int
+	historyCache     *lru.Cache
 }
 
 func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
@@ -114,29 +129,64 @@ func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MaxTipCapMultiplierRatio = sanitizeBigInt(params.MaxTipCapMultiplierRatio, DecimalUnitBn, nil, big.NewInt(10*DecimalUnit), "MaxTipCapMultiplierRatio")
 	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
 
-	cache, _ := lru.New(2048)
+	oracle := &Oracle{
+		backend:          backend,
+		ethBackend:       ethBackend,
+		cfg:              params,
+		maxHeaderHistory: params.MaxHeaderHistory,
+		maxBlockHistory:  params.MaxBlockHistory,
+	}
+
+	oracle.historyCache, _ = lru.New(2048)
+	oracle.baseFees.cache, _ = lru.New(1024)
+	oracle.baseFees.baseFee = backend.GetRules().Economy.MinGasPrice
+
 	if ethBackend != nil {
 		headEvent := make(chan evmcore.ChainHeadNotify, 1)
 		ethBackend.SubscribeNewBlockNotify(headEvent)
 		go func() {
 			var lastHead common.Hash
 			for ev := range headEvent {
-				if ev.Block.ParentHash != lastHead {
-					cache.Purge()
-				}
+				oracle.handleHeadEvent(ev.Block, ev.Block.ParentHash == lastHead)
 				lastHead = ev.Block.Hash
 			}
 		}()
 	}
+	return oracle
+}
 
-	return &Oracle{
-		backend:          backend,
-		ethBackend:       ethBackend,
-		cfg:              params,
-		maxHeaderHistory: params.MaxHeaderHistory,
-		maxBlockHistory:  params.MaxBlockHistory,
-		historyCache:     cache,
+func (gpo *Oracle) handleHeadEvent(block *evmcore.EvmBlock, contiguous bool) {
+	if !contiguous {
+		/* To clarify: why ??
+		gpo.historyCache.Purge()*/
+		gpo.baseFees.blockTime = nil
 	}
+
+	duration := baseFeeBlockTime
+	blockTime := block.Time.Time()
+
+	if gpo.baseFees.blockTime != nil {
+		duration = int64(blockTime.Sub(*gpo.baseFees.blockTime) / time.Millisecond)
+
+		if duration > baseFeeBlockTime {
+			duration = baseFeeBlockTime
+		} else if duration < 0 {
+			duration = 1
+		}
+	}
+
+	baseFee := calculateBaseFee(block, duration)
+	if baseFee.Cmp(gpo.backend.GetRules().Economy.MinGasPrice) < 0 {
+		baseFee = gpo.backend.GetRules().Economy.MinGasPrice
+	}
+
+	gpo.baseFees.lock.Lock()
+
+	gpo.baseFees.head = idx.Block(block.Number.Uint64())
+	gpo.baseFees.baseFee = baseFee
+	gpo.baseFees.blockTime = &blockTime
+
+	gpo.baseFees.lock.Unlock()
 }
 
 func (gpo *Oracle) maxTotalGasPower() *big.Int {
@@ -230,4 +280,50 @@ func (gpo *Oracle) SuggestTipCap() *big.Int {
 	}
 	gpo.cache.lock.Unlock()
 	return new(big.Int).Set(value)
+}
+
+// calcBaseFee calculates the basefee of the header for EIP1559 blocks.
+func calculateBaseFee(block *evmcore.EvmBlock, duration int64) *big.Int {
+	var (
+		parentGasTarget = block.GasLimit / params.ElasticityMultiplier
+		gasUsedAdjusted = (block.GasUsed * uint64(baseFeeBlockTime)) / uint64(duration)
+	)
+	// If the parent gasUsed is the same as the target, the baseFee remains unchanged.
+	if gasUsedAdjusted == parentGasTarget {
+		return block.BaseFee
+	}
+
+	var (
+		parentGasTargetBig       = new(big.Int).SetUint64(parentGasTarget)
+		baseFeeChangeDenominator = new(big.Int).SetUint64(params.BaseFeeChangeDenominator)
+		durationBig              = big.NewInt(duration)
+	)
+
+	if gasUsedAdjusted > parentGasTarget {
+		// If the parent block used more gas than its target, the baseFee should increase.
+		gasUsedDelta := new(big.Int).SetUint64(gasUsedAdjusted - parentGasTarget)
+		x := new(big.Int).Mul(block.BaseFee, gasUsedDelta)
+		y := x.Div(x, parentGasTargetBig)
+		baseFeeDelta := math.BigMax(
+			x.Div(y, baseFeeChangeDenominator),
+			common.Big1,
+		)
+
+		return x.Add(block.BaseFee, baseFeeDelta.
+			Mul(durationBig, baseFeeDelta).
+			Div(baseFeeDelta, baseFeeBlockTimeBn))
+	} else {
+		// Otherwise if the parent block used less gas than its target, the baseFee should decrease.
+		gasUsedDelta := new(big.Int).SetUint64(parentGasTarget - gasUsedAdjusted)
+		x := new(big.Int).Mul(block.BaseFee, gasUsedDelta)
+		y := x.Div(x, parentGasTargetBig)
+		baseFeeDelta := x.Div(y, baseFeeChangeDenominator)
+
+		return math.BigMax(
+			x.Sub(block.BaseFee, baseFeeDelta.
+				Mul(durationBig, baseFeeDelta).
+				Div(baseFeeDelta, baseFeeBlockTimeBn)),
+			common.Big0,
+		)
+	}
 }
