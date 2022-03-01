@@ -211,7 +211,7 @@ func (gpo *Oracle) GetBaseFee() (idx.Block, *big.Int) {
 	gpo.fees.lock.RLock()
 	defer gpo.fees.lock.RUnlock()
 
-	return gpo.fees.head, gpo.fees.baseFee
+	return gpo.fees.head, new(big.Int).Set(gpo.fees.baseFee)
 }
 
 // SuggestTipCap returns a tip cap so that newly created transaction can have a
@@ -224,7 +224,7 @@ func (gpo *Oracle) SuggestTipCap() *big.Int {
 	gpo.fees.lock.RLock()
 	defer gpo.fees.lock.RUnlock()
 
-	return gpo.fees.tipFee
+	return new(big.Int).Set(gpo.fees.tipFee)
 }
 
 // calcBaseFee calculates the basefee of the header for EIP1559 blocks.
@@ -346,7 +346,13 @@ func (gpo *Oracle) calculateTipFee(block *evmcore.EvmBlock) *big.Int {
 		}
 	}
 	if cache.num >= tipFeeHistoryBlocks {
-		return cache.cache[(cache.num*tipFeeHistoryPercent)/100].fee
+		tipFee := cache.cache[(cache.num*tipFeeHistoryPercent)/100].fee
+		if tipFee.Cmp(gpo.backend.GetRules().Economy.MinGasTip) < 0 {
+			tipFee = gpo.backend.GetRules().Economy.MinGasTip
+		} else if tipFee.Cmp(gpo.cfg.MaxTipCap) > 0 {
+			tipFee = gpo.cfg.MaxTipCap
+		}
+		return tipFee
 	}
 	return gpo.backend.GetRules().Economy.MinGasTip
 }
