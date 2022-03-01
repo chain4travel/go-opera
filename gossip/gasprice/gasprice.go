@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 	"time"
 
@@ -32,20 +33,21 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 
 	"github.com/Fantom-foundation/go-opera/evmcore"
+	"github.com/Fantom-foundation/go-opera/inter"
 	"github.com/Fantom-foundation/go-opera/opera"
-	"github.com/Fantom-foundation/go-opera/utils/piecefunc"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
-const DecimalUnit = piecefunc.DecimalUnit
-const baseFeeBlockTime = int64((10 * time.Second) / time.Millisecond)
+const baseFeeBlockTime = uint64((10 * time.Second) / time.Millisecond)
+
+const tipFeeHistoryBlocks = 20
+const tipFeeHistorySamples = 3
+const tipFeeHistoryPercent = 60
 
 var DefaultMaxTipCap = big.NewInt(100000 * params.GWei)
-var secondBn = big.NewInt(int64(time.Second))
-var DecimalUnitBn = big.NewInt(DecimalUnit)
-var baseFeeBlockTimeBn = big.NewInt(baseFeeBlockTime)
+var baseFeeBlockTimeBn = big.NewInt(int64(baseFeeBlockTime))
 
 type Config struct {
 	MaxTipCap                   *big.Int `toml:",omitempty"`
@@ -72,23 +74,33 @@ type Reader interface {
 	GetPendingRules() opera.Rules
 }
 
-type cache struct {
-	head  idx.Block
-	lock  sync.RWMutex
-	value *big.Int
+type baseFeeCacheResut struct {
+	baseFee *big.Int
 }
 
-type baseFees struct {
+type tipFeeCacheEntry struct {
+	blockNumber uint64
+	fee         *big.Int
+}
+
+type tipFeeCache struct {
+	// tipFeeCache
+	num   int
+	cache []tipFeeCacheEntry
+}
+
+type fees struct {
 	// Lock for headValue
 	lock      sync.RWMutex
-	blockTime *time.Time
+	blockTime inter.Timestamp
 
 	// latest evaluated block
 	head    idx.Block
 	baseFee *big.Int
+	tipFee  *big.Int
 
-	// history cache
-	cache *lru.Cache
+	// cache of tip fees
+	tipCache tipFeeCache
 }
 
 // Oracle recommends gas prices based on the content of recent
@@ -97,12 +109,13 @@ type Oracle struct {
 	backend    Reader
 	ethBackend EthBackend
 	cfg        Config
-	cache      cache
-	baseFees   baseFees
+	fees       fees
 
+	// FeeHistory
 	maxHeaderHistory int
 	maxBlockHistory  int
 	historyCache     *lru.Cache
+	baseFeeCache     *lru.Cache
 }
 
 func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
@@ -125,9 +138,6 @@ func sanitizeBigInt(val, min, max, _default *big.Int, name string) *big.Int {
 // gasprice for newly created transaction.
 func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	params.MaxTipCap = sanitizeBigInt(params.MaxTipCap, nil, nil, DefaultMaxTipCap, "MaxTipCap")
-	params.GasPowerWallRatio = sanitizeBigInt(params.GasPowerWallRatio, big.NewInt(1), big.NewInt(DecimalUnit-2), big.NewInt(1), "GasPowerWallRatio")
-	params.MaxTipCapMultiplierRatio = sanitizeBigInt(params.MaxTipCapMultiplierRatio, DecimalUnitBn, nil, big.NewInt(10*DecimalUnit), "MaxTipCapMultiplierRatio")
-	params.MiddleTipCapMultiplierRatio = sanitizeBigInt(params.MiddleTipCapMultiplierRatio, DecimalUnitBn, params.MaxTipCapMultiplierRatio, big.NewInt(2*DecimalUnit), "MiddleTipCapMultiplierRatio")
 
 	oracle := &Oracle{
 		backend:          backend,
@@ -138,8 +148,11 @@ func NewOracle(backend Reader, ethBackend EthBackend, params Config) *Oracle {
 	}
 
 	oracle.historyCache, _ = lru.New(2048)
-	oracle.baseFees.cache, _ = lru.New(1024)
-	oracle.baseFees.baseFee = backend.GetRules().Economy.MinGasPrice
+	oracle.baseFeeCache, _ = lru.New(128)
+	oracle.fees.tipCache.cache = make([]tipFeeCacheEntry, tipFeeHistoryBlocks*tipFeeHistorySamples)
+
+	oracle.fees.baseFee = backend.GetRules().Economy.MinGasPrice
+	oracle.fees.tipFee = backend.GetRules().Economy.MinGasTip
 
 	if ethBackend != nil {
 		headEvent := make(chan evmcore.ChainHeadNotify, 1)
@@ -159,99 +172,46 @@ func (gpo *Oracle) handleHeadEvent(block *evmcore.EvmBlock, contiguous bool) {
 	if !contiguous {
 		/* To clarify: why ??
 		gpo.historyCache.Purge()*/
-		gpo.baseFees.blockTime = nil
+		gpo.fees.blockTime = 0
 	}
 
 	duration := baseFeeBlockTime
-	blockTime := block.Time.Time()
+	blockTime := block.Time
 
-	if gpo.baseFees.blockTime != nil {
-		duration = int64(blockTime.Sub(*gpo.baseFees.blockTime) / time.Millisecond)
-
+	if blockTime > gpo.fees.blockTime {
+		duration = uint64(blockTime-gpo.fees.blockTime) / uint64(time.Millisecond)
 		if duration > baseFeeBlockTime {
 			duration = baseFeeBlockTime
-		} else if duration < 0 {
-			duration = 1
 		}
+	} else {
+		// Default for wrong timestamps: 1ms
+		duration = 1
 	}
 
 	baseFee := calculateBaseFee(block, duration)
-	if baseFee.Cmp(gpo.backend.GetRules().Economy.MinGasPrice) < 0 {
+	if baseFee == nil || baseFee.Cmp(gpo.backend.GetRules().Economy.MinGasPrice) < 0 {
 		baseFee = gpo.backend.GetRules().Economy.MinGasPrice
 	}
 
-	gpo.baseFees.lock.Lock()
+	tipFee := gpo.calculateTipFee(block)
+	if tipFee.Cmp(gpo.backend.GetRules().Economy.MinGasTip) < 0 {
+		baseFee = gpo.backend.GetRules().Economy.MinGasTip
+	}
 
-	gpo.baseFees.head = idx.Block(block.Number.Uint64())
-	gpo.baseFees.baseFee = baseFee
-	gpo.baseFees.blockTime = &blockTime
+	gpo.fees.lock.Lock()
+	defer gpo.fees.lock.Unlock()
 
-	gpo.baseFees.lock.Unlock()
+	gpo.fees.head = idx.Block(block.Number.Uint64())
+	gpo.fees.baseFee = baseFee
+	gpo.fees.tipFee = tipFee
+	gpo.fees.blockTime = blockTime
 }
 
-func (gpo *Oracle) maxTotalGasPower() *big.Int {
-	rules := gpo.backend.GetRules()
+func (gpo *Oracle) GetBaseFee() (idx.Block, *big.Int) {
+	gpo.fees.lock.RLock()
+	defer gpo.fees.lock.RUnlock()
 
-	allocBn := new(big.Int).SetUint64(rules.Economy.LongGasPower.AllocPerSec)
-	periodBn := new(big.Int).SetUint64(uint64(rules.Economy.LongGasPower.MaxAllocPeriod))
-	maxTotalGasPowerBn := new(big.Int).Mul(allocBn, periodBn)
-	maxTotalGasPowerBn.Div(maxTotalGasPowerBn, secondBn)
-	return maxTotalGasPowerBn
-}
-
-func (gpo *Oracle) suggestTipCap() *big.Int {
-	max := gpo.maxTotalGasPower()
-
-	current := new(big.Int).SetUint64(gpo.backend.TotalGasPowerLeft())
-
-	freeRatioBn := current.Mul(current, DecimalUnitBn)
-	freeRatioBn.Div(freeRatioBn, max)
-	freeRatio := freeRatioBn.Uint64()
-	if freeRatio > DecimalUnit {
-		freeRatio = DecimalUnit
-	}
-
-	multiplierFn := piecefunc.NewFunc([]piecefunc.Dot{
-		{
-			X: 0,
-			Y: gpo.cfg.MaxTipCapMultiplierRatio.Uint64(),
-		},
-		{
-			X: gpo.cfg.GasPowerWallRatio.Uint64(),
-			Y: gpo.cfg.MaxTipCapMultiplierRatio.Uint64(),
-		},
-		{
-			X: gpo.cfg.GasPowerWallRatio.Uint64() + (DecimalUnit-gpo.cfg.GasPowerWallRatio.Uint64())/2,
-			Y: gpo.cfg.MiddleTipCapMultiplierRatio.Uint64(),
-		},
-		{
-			X: DecimalUnit,
-			Y: 0,
-		},
-	})
-
-	multiplier := new(big.Int).SetUint64(multiplierFn(freeRatio))
-
-	minPrice := gpo.backend.GetRules().Economy.MinGasPrice
-	adjustedMinPrice := math.BigMax(minPrice, gpo.backend.GetPendingRules().Economy.MinGasPrice)
-
-	// tip cap = (multiplier * adjustedMinPrice + adjustedMinPrice) - minPrice
-	tip := multiplier.Mul(multiplier, adjustedMinPrice)
-	tip.Div(tip, DecimalUnitBn)
-	tip.Add(tip, adjustedMinPrice)
-	tip.Sub(tip, minPrice)
-
-	adjustedMinTipCap := math.BigMax(
-		gpo.backend.GetRules().Economy.MinGasTip,
-		gpo.backend.GetPendingRules().Economy.MinGasTip)
-
-	if tip.Cmp(adjustedMinTipCap) < 0 {
-		return adjustedMinTipCap
-	}
-	if tip.Cmp(gpo.cfg.MaxTipCap) > 0 {
-		return gpo.cfg.MaxTipCap
-	}
-	return tip
+	return gpo.fees.head, gpo.fees.baseFee
 }
 
 // SuggestTipCap returns a tip cap so that newly created transaction can have a
@@ -261,33 +221,24 @@ func (gpo *Oracle) suggestTipCap() *big.Int {
 // necessary to add the basefee to the returned number to fall back to the legacy
 // behavior.
 func (gpo *Oracle) SuggestTipCap() *big.Int {
-	head := gpo.backend.GetLatestBlockIndex()
+	gpo.fees.lock.RLock()
+	defer gpo.fees.lock.RUnlock()
 
-	// If the latest gasprice is still available, return it.
-	gpo.cache.lock.RLock()
-	cachedHead, cachedValue := gpo.cache.head, gpo.cache.value
-	gpo.cache.lock.RUnlock()
-	if head <= cachedHead {
-		return new(big.Int).Set(cachedValue)
-	}
-
-	value := gpo.suggestTipCap()
-
-	gpo.cache.lock.Lock()
-	if head > gpo.cache.head {
-		gpo.cache.head = head
-		gpo.cache.value = value
-	}
-	gpo.cache.lock.Unlock()
-	return new(big.Int).Set(value)
+	return gpo.fees.tipFee
 }
 
 // calcBaseFee calculates the basefee of the header for EIP1559 blocks.
-func calculateBaseFee(block *evmcore.EvmBlock, duration int64) *big.Int {
+func calculateBaseFee(block *evmcore.EvmBlock, duration uint64) *big.Int {
+	// Pre check
+	if block.BaseFee == nil {
+		return nil
+	}
+
 	var (
 		parentGasTarget = block.GasLimit / params.ElasticityMultiplier
 		gasUsedAdjusted = (block.GasUsed * uint64(baseFeeBlockTime)) / uint64(duration)
 	)
+
 	// If the parent gasUsed is the same as the target, the baseFee remains unchanged.
 	if gasUsedAdjusted == parentGasTarget {
 		return block.BaseFee
@@ -296,7 +247,7 @@ func calculateBaseFee(block *evmcore.EvmBlock, duration int64) *big.Int {
 	var (
 		parentGasTargetBig       = new(big.Int).SetUint64(parentGasTarget)
 		baseFeeChangeDenominator = new(big.Int).SetUint64(params.BaseFeeChangeDenominator)
-		durationBig              = big.NewInt(duration)
+		durationBig              = new(big.Int).SetUint64(duration)
 	)
 
 	if gasUsedAdjusted > parentGasTarget {
@@ -326,4 +277,76 @@ func calculateBaseFee(block *evmcore.EvmBlock, duration int64) *big.Int {
 			common.Big0,
 		)
 	}
+}
+
+// tip fee cache sorter sorts in ascending order
+func (c tipFeeCache) Len() int           { return c.num }
+func (c tipFeeCache) Swap(i, j int)      { c.cache[i], c.cache[j] = c.cache[j], c.cache[i] }
+func (c tipFeeCache) Less(i, j int) bool { return c.cache[i].fee.Cmp(c.cache[j].fee) < 0 }
+
+// calculateTipFee updates tipCache by removing outdated blocks and adding
+// up to tipFeeHistorySamples (cheapest) new elements.
+// If we have enough data, we get a good candiate by selecting the
+// percentile position in our tipCache.
+func (gpo *Oracle) calculateTipFee(block *evmcore.EvmBlock) *big.Int {
+	// remove all entries older than tipFeeHistoryBlocks
+	// also make sure that accidential future blocks are removed
+	cache := &gpo.fees.tipCache
+	if block.Number.Uint64() >= tipFeeHistoryBlocks {
+		removal := block.Number.Uint64() - tipFeeHistoryBlocks
+		nextInsertPos := 0
+		for i := 0; i < cache.num; i++ {
+			if cache.cache[i].blockNumber > removal &&
+				cache.cache[i].blockNumber < block.Number.Uint64() {
+
+				if i != nextInsertPos {
+					cache.cache[nextInsertPos] = cache.cache[i]
+				}
+				nextInsertPos++
+			}
+		}
+		cache.num = nextInsertPos
+	}
+
+	// get max of tipFeeHistorySamples out of the new block
+	if block.BaseFee != nil {
+		numResults := 0
+		var results [tipFeeHistorySamples]tipFeeCacheEntry
+
+		for _, tx := range block.Transactions {
+			// don't use coinbase transactions for calculation
+			if tx.GasPrice().Cmp(common.Big0) <= 0 && tx.GasFeeCap().Cmp(common.Big0) <= 0 {
+				continue
+			}
+			if tipFee, err := tx.EffectiveGasTip(block.BaseFee); err == nil {
+				insertPos := -1
+				if numResults < tipFeeHistorySamples {
+					insertPos = numResults
+					numResults++
+				} else {
+					for i := 0; i < tipFeeHistorySamples; i++ {
+						if results[i].fee.Cmp(tipFee) > 0 && (insertPos < 0 ||
+							results[i].fee.Cmp(results[insertPos].fee) > 0) {
+							insertPos = i
+						}
+					}
+				}
+				if insertPos >= 0 {
+					results[insertPos] = tipFeeCacheEntry{blockNumber: block.Number.Uint64(), fee: tipFee}
+				}
+			}
+		}
+		if numResults > 0 {
+			for numResults > 0 {
+				numResults--
+				cache.cache[cache.num] = results[numResults]
+				cache.num++
+			}
+			sort.Sort(cache)
+		}
+	}
+	if cache.num >= tipFeeHistoryBlocks {
+		return cache.cache[(cache.num*tipFeeHistoryPercent)/100].fee
+	}
+	return gpo.backend.GetRules().Economy.MinGasTip
 }

@@ -35,6 +35,11 @@ import (
 // EthBackend includes all necessary background APIs for oracle.
 type TestEthBackend struct {
 	block idx.Block
+	rules opera.Rules
+}
+
+func (t *TestEthBackend) GetRules() opera.Rules {
+	return t.rules
 }
 
 func (t TestEthBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
@@ -64,7 +69,10 @@ func (t TestEthBackend) SubscribeNewBlockNotify(ch chan<- evmcore.ChainHeadNotif
 }
 
 func newEthBackend(block idx.Block) *TestEthBackend {
-	return &TestEthBackend{block}
+	return &TestEthBackend{
+		block: block,
+		rules: opera.FakeNetRules(),
+	}
 }
 
 func TestFeeHistory(t *testing.T) {
@@ -99,6 +107,12 @@ func TestFeeHistory(t *testing.T) {
 			MaxBlockHistory:  c.maxBlock,
 		}
 		oracle := NewOracle(newTestBackend(), newEthBackend(32), config)
+		// also fast forward fees
+		oracle.handleHeadEvent(&evmcore.EvmBlock{
+			EvmHeader: evmcore.EvmHeader{
+				Number: big.NewInt(32),
+			},
+		}, true)
 
 		first, reward, baseFee, ratio, err := oracle.FeeHistory(context.Background(), c.count, c.last, c.percent)
 

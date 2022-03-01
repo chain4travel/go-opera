@@ -2,7 +2,6 @@ package gossip
 
 import (
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/Fantom-foundation/lachesis-base/gossip/dagprocessor"
@@ -203,12 +202,9 @@ func DefaultConfig(scale cachescale.Func) Config {
 		},
 
 		GPO: gasprice.Config{
-			MaxTipCap:                   gasprice.DefaultMaxTipCap,
-			MaxTipCapMultiplierRatio:    big.NewInt(25 * gasprice.DecimalUnit),
-			MiddleTipCapMultiplierRatio: big.NewInt(3.75 * gasprice.DecimalUnit),
-			GasPowerWallRatio:           big.NewInt(0.05 * gasprice.DecimalUnit),
-			MaxHeaderHistory:            1024,
-			MaxBlockHistory:             1024,
+			MaxTipCap:        gasprice.DefaultMaxTipCap,
+			MaxHeaderHistory: 1024,
+			MaxBlockHistory:  1024,
 		},
 
 		VersionWatcher: verwatcher.Config{

@@ -27,7 +27,6 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -58,9 +57,9 @@ type blockFees struct {
 
 // processedFees contains the results of a processed block and is also used for caching
 type processedFees struct {
-	reward               []*big.Int
-	baseFee, nextBaseFee *big.Int
-	gasUsedRatio         float64
+	reward       []*big.Int
+	baseFee      *big.Int
+	gasUsedRatio float64
 }
 
 // txGasAndReward is sorted in ascending order based on reward
@@ -84,14 +83,8 @@ func (s sortGasAndReward) Less(i, j int) bool {
 // the block field filled in, retrieves the block from the backend if not present yet and
 // fills in the rest of the fields.
 func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
-	chainconfig := oracle.backend.GetRules().EvmChainConfig()
 	if bf.results.baseFee = bf.header.BaseFee; bf.results.baseFee == nil {
-		bf.results.baseFee = new(big.Int)
-	}
-	if chainconfig.IsLondon(big.NewInt(int64(bf.blockNumber + 1))) {
-		bf.results.nextBaseFee = misc.CalcBaseFee(chainconfig, bf.header)
-	} else {
-		bf.results.nextBaseFee = new(big.Int)
+		bf.results.baseFee = common.Big0
 	}
 	bf.results.gasUsedRatio = float64(bf.header.GasUsed) / float64(bf.header.GasLimit)
 	if len(percentiles) == 0 {
@@ -120,10 +113,11 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 			numValidTx++
 		}
 	}
-	sorter = sorter[:numValidTx]
-	sort.Sort(sorter)
 
 	if numValidTx > 0 {
+		sorter = sorter[:numValidTx]
+		sort.Sort(sorter)
+
 		var txIndex int
 		sumGasUsed := sorter[0].gasUsed
 
@@ -186,6 +180,40 @@ func (oracle *Oracle) resolveBlockRange(ctx context.Context, lastBlock rpc.Block
 	}
 
 	return pendingBlock, pendingReceipts, uint64(lastBlock), blocks, nil
+}
+
+// getBaseFee tries to extract the BaseFee of an EIP1559 block
+// The value for the panding is taken directly from gasPrice.
+// For past blocks it is first tried to retrieve from cache, if
+// no entry is found, we retrive the information from the block itself.
+// The Basefee from block is - except they are nil - written to cache.
+func (oracle *Oracle) getBaseFee(ctx context.Context, blockNumber uint64) *big.Int {
+	// check if we are requesting pending baseFee
+	head, baseFee := oracle.GetBaseFee()
+	if blockNumber > uint64(head) {
+		return baseFee
+	}
+
+	// we are looking for a past basefee, try cache first
+	cacheKey := struct {
+		number uint64
+	}{blockNumber}
+
+	if cacheVal, ok := oracle.baseFeeCache.Get(cacheKey); ok {
+		return cacheVal.(baseFeeCacheResut).baseFee
+	}
+
+	// we have to retrieve the baseFee from db
+	header, err := oracle.ethBackend.HeaderByNumber(ctx, rpc.BlockNumber(blockNumber))
+
+	if err != nil || header.BaseFee == nil {
+		return nil
+	}
+
+	// Set the value in the cache
+	oracle.baseFeeCache.Add(cacheKey, baseFeeCacheResut{header.BaseFee})
+
+	return header.BaseFee
 }
 
 // FeeHistory returns data relevant for fee estimation based on the specified range of blocks.
@@ -303,7 +331,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 		gasUsedRatio = make([]float64, blocks)
 		firstMissing = blocks
 	)
-	for ; blocks > 0; blocks-- {
+	for blocksLeft := blocks; blocksLeft > 0; blocksLeft-- {
 		fees := <-results
 		if fees.err != nil {
 			return common.Big0, nil, nil, nil, fees.err
@@ -311,9 +339,6 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 		i := int(fees.blockNumber - oldestBlock)
 		if fees.results.baseFee != nil {
 			reward[i], baseFee[i], gasUsedRatio[i] = fees.results.reward, fees.results.baseFee, fees.results.gasUsedRatio
-			if baseFee[i+1] == nil {
-				baseFee[i+1] = fees.results.nextBaseFee
-			}
 		} else {
 			// getting no block and no error means we are requesting into the future (might happen because of a reorg)
 			if i < firstMissing {
@@ -321,9 +346,26 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 			}
 		}
 	}
+
 	if firstMissing == 0 {
 		return common.Big0, nil, nil, nil, nil
 	}
+
+	// Insert one more baseFee into the result List
+	if oracle.backend.GetRules().EvmChainConfig().IsLondon(big.NewInt(int64(firstMissing + 1))) {
+		if firstMissing != blocks { // We don't have a baseFee on next block
+			firstMissing--
+		} else if baseFee[firstMissing] = oracle.getBaseFee(
+			ctx, oldestBlock+uint64(firstMissing)+1); baseFee[firstMissing] == nil {
+			firstMissing--
+		}
+		if firstMissing == 0 {
+			return common.Big0, nil, nil, nil, nil
+		}
+	} else {
+		baseFee[firstMissing] = common.Big0
+	}
+
 	if len(rewardPercentiles) != 0 {
 		reward = reward[:firstMissing]
 	} else {
