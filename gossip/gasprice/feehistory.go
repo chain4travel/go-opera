@@ -230,8 +230,12 @@ func (oracle *Oracle) getBaseFee(ctx context.Context, blockNumber uint64) *big.I
 // Note: baseFee includes the next block after the newest of the returned range, because this
 // value can be derived from the newest block.
 func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	// in case of error return empty baseFee so Metamask still uses FeeMarket
+	baseFeesError := []*big.Int{}
+
 	if blocks < 1 {
-		return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
+		// returning with no data and no error means there are no retrievable blocks
+		return common.Big0, nil, baseFeesError, nil, nil
 	}
 	maxFeeHistory := oracle.maxHeaderHistory
 	if len(rewardPercentiles) != 0 {
@@ -256,7 +260,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 	)
 	pendingBlock, pendingReceipts, lastBlock, blocks, err := oracle.resolveBlockRange(ctx, unresolvedLastBlock, blocks)
 	if err != nil || blocks == 0 {
-		return common.Big0, nil, nil, nil, err
+		return common.Big0, nil, baseFeesError, nil, err
 	}
 	oldestBlock := lastBlock + 1 - uint64(blocks)
 
@@ -334,7 +338,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 	for blocksLeft := blocks; blocksLeft > 0; blocksLeft-- {
 		fees := <-results
 		if fees.err != nil {
-			return common.Big0, nil, nil, nil, fees.err
+			return common.Big0, nil, baseFeesError, nil, fees.err
 		}
 		i := int(fees.blockNumber - oldestBlock)
 		if fees.results.baseFee != nil {
@@ -348,7 +352,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 	}
 
 	if firstMissing == 0 {
-		return common.Big0, nil, nil, nil, nil
+		return common.Big0, nil, baseFeesError, nil, nil
 	}
 
 	// Insert one more baseFee into the result List
@@ -360,7 +364,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLast
 			firstMissing--
 		}
 		if firstMissing == 0 {
-			return common.Big0, nil, nil, nil, nil
+			return common.Big0, nil, baseFeesError, nil, nil
 		}
 	} else {
 		baseFee[firstMissing] = common.Big0

@@ -93,7 +93,7 @@ func (s *PublicEthereumAPI) ProtocolVersion(ctx context.Context) (int, error) {
 type feeHistoryResult struct {
 	OldestBlock  *hexutil.Big     `json:"oldestBlock"`
 	Reward       [][]*hexutil.Big `json:"reward,omitempty"`
-	BaseFee      []*hexutil.Big   `json:"baseFeePerGas,omitempty"`
+	BaseFee      []*hexutil.Big   `json:"baseFeePerGas"`
 	GasUsedRatio []float64        `json:"gasUsedRatio"`
 }
 

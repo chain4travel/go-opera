@@ -195,7 +195,7 @@ func (gpo *Oracle) handleHeadEvent(block *evmcore.EvmBlock, contiguous bool) {
 
 	tipFee := gpo.calculateTipFee(block)
 	if tipFee.Cmp(gpo.backend.GetRules().Economy.MinGasTip) < 0 {
-		baseFee = gpo.backend.GetRules().Economy.MinGasTip
+		tipFee = gpo.backend.GetRules().Economy.MinGasTip
 	}
 
 	gpo.fees.lock.Lock()
